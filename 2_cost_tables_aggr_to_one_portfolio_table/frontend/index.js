@@ -46,14 +46,15 @@ const COLUMNS = [
 
 const headerKey = column => `${column.key}Header`;
 const ddcFieldKey = column => `${column.key}DdcField`;
+const portfolioFieldKey = column => `${column.key}PortfolioField`;
 const csCoeFieldKey = column => `${column.key}CsCoeField`;
 const visibleKey = column => `${column.key}Visible`;
 const topFilterKey = column => `${column.key}TopFilter`;
 const aggregationKey = column => `${column.key}AggregationEnabled`;
 
 function getSelectedTable(base, tableId) {
-    if (typeof tableId === 'string') return base.getTableByIdIfExists(tableId) || base.tables[0] || null;
-    return base.tables[0] || null;
+    const id = typeof tableId === 'string' ? tableId : tableId?.id;
+    return id ? base.getTableByIdIfExists(id) : null;
 }
 
 function getConfiguredField(table, configuredField) {
@@ -64,36 +65,28 @@ function getConfiguredField(table, configuredField) {
 function getCustomProperties(base, tableIds) {
     const ddc = getSelectedTable(base, tableIds[TABLE_KEYS.ddc]);
     const csCoe = getSelectedTable(base, tableIds[TABLE_KEYS.csCoe]);
-    const fallbackTable = base.tables[0] || undefined;
-    const fieldProperty = (key, label, table) => ({key, label, type: 'field', table: table || fallbackTable});
+    const portfolio = getSelectedTable(base, tableIds[TABLE_KEYS.portfolio]);
+    const fieldProperty = (key, label, table) => table ? [{key, label, type: 'field', table}] : [];
+    const linkProperty = (key, label, table) => fieldProperty(key, label, table).map(property => ({
+        ...property,
+        shouldFieldBeAllowed: ({config}) => config.type === 'multipleRecordLinks' && config.options?.linkedTableId === portfolio?.id,
+    }));
     return [
         {key: TABLE_KEYS.ddc, label: 'DDC source table', type: 'table'},
         {key: TABLE_KEYS.csCoe, label: 'CS CoE source table', type: 'table'},
         {key: TABLE_KEYS.portfolio, label: 'Portfolio table', type: 'table'},
+        ...linkProperty('ddcPortfolioLink', 'DDC link to portfolio', ddc),
+        ...linkProperty('csCoePortfolioLink', 'CS CoE link to portfolio', csCoe),
         ...COLUMNS.flatMap(column => [
             {key: headerKey(column), label: 'Header name', type: 'string', defaultValue: column.defaultHeader},
-            fieldProperty(ddcFieldKey(column), 'Field DDC', ddc),
-            fieldProperty(csCoeFieldKey(column), 'Field CS CoE', csCoe),
+            ...fieldProperty(ddcFieldKey(column), 'Field DDC', ddc),
+            ...fieldProperty(csCoeFieldKey(column), 'Field CS CoE', csCoe),
+            ...fieldProperty(portfolioFieldKey(column), 'Portfolio field (fallback)', portfolio),
             {key: visibleKey(column), label: 'Show in grid', type: 'boolean', defaultValue: true},
             {key: topFilterKey(column), label: 'Show at top', type: 'boolean', defaultValue: false},
             {key: aggregationKey(column), label: 'Aggregation enabled (On: Sum, Off: Max)', type: 'boolean', defaultValue: true},
         ]),
     ];
-}
-
-function buildConfigByTableId(tables, propertyValues) {
-    const visibleColumns = (table, fieldKey) => COLUMNS
-        .map(column => getConfiguredField(table, propertyValues[fieldKey(column)]))
-        .filter(Boolean)
-        .map(field => field.id);
-    return Object.fromEntries([
-        [tables.ddc, visibleColumns(tables.ddc, ddcFieldKey)],
-        [tables.csCoe, visibleColumns(tables.csCoe, csCoeFieldKey)],
-        [tables.portfolio, []],
-    ].filter(([table]) => table).map(([table, visibleColumnIds]) => [
-        table.id,
-        {visibleColumnIds},
-    ]));
 }
 
 function textValue(value) {
@@ -128,7 +121,7 @@ function cellOptionLabels(row, columnKey) {
     // Prefer the clean record labels. Airtable's rendered text is only a fallback
     // for source fields that do not expose their raw linked/lookup labels.
     if (labels.length) return [...new Set(labels)];
-    const displayText = cell.field ? cleanDropdownLabel(row.record.getCellValueAsString(cell.field)) : '';
+    const displayText = cell.field ? cleanDropdownLabel((cell.record || row.record).getCellValueAsString(cell.field)) : '';
     const displayLabels = displayText
         ? displayText.split(',').map(cleanDropdownLabel).filter(Boolean)
         : [];
@@ -145,11 +138,17 @@ function selectedFilterValues(value) {
     return (Array.isArray(value) ? value : [value]).filter(Boolean);
 }
 
+function numericValues(value) {
+    if (Array.isArray(value)) return value.flatMap(numericValues);
+    if (value === null || value === undefined || typeof value === 'boolean') return [];
+    if (typeof value === 'object') return numericValues(value.value ?? value.amount);
+    if (typeof value === 'string' && !value.trim()) return [];
+    const number = Number(value);
+    return Number.isFinite(number) ? [number] : [];
+}
+
 function numericValue(value) {
-    if (Array.isArray(value)) return numericValue(value[0]);
-    if (value && typeof value === 'object') return numericValue(value.value ?? value.amount ?? textValue(value));
-    const number = typeof value === 'number' ? value : Number(value);
-    return Number.isFinite(number) ? number : 0;
+    return numericValues(value).reduce((total, number) => total + number, 0);
 }
 
 const NUMERIC_FIELD_TYPES = new Set(['number', 'currency', 'percent', 'rating', 'duration', 'count', 'autoNumber']);
@@ -170,11 +169,20 @@ function formatAggregate(value) {
 }
 
 function aggregateRows(rows, columnKey, aggregationMode) {
-    if (!rows.length) return 0;
-    if (aggregationMode === 'max') {
-        return rows.reduce((maximum, row) => Math.max(maximum, numericValue(row.cells[columnKey].value)), Number.NEGATIVE_INFINITY);
-    }
-    return rows.reduce((total, row) => total + numericValue(row.cells[columnKey].value), 0);
+    const seen = new Set();
+    const values = rows.flatMap(row => {
+        const cell = row.cells[columnKey];
+        if (!cell.contributions) return numericValues(cell.value);
+        return cell.contributions.flatMap(contribution => {
+            if (seen.has(contribution.id)) return [];
+            seen.add(contribution.id);
+            return numericValues(contribution.value);
+        });
+    });
+    if (!values.length) return 0;
+    return aggregationMode === 'max'
+        ? values.reduce((maximum, value) => Math.max(maximum, value), Number.NEGATIVE_INFINITY)
+        : values.reduce((total, value) => total + value, 0);
 }
 
 function aggregateColumns(rows, columnKeys, aggregationModes) {
@@ -256,8 +264,10 @@ function matchesFilter(row, filter) {
     if (filter.condition === 'isEmpty') return isEmpty;
     if (filter.condition === 'notEmpty') return !isEmpty;
     if (filter.condition === 'greaterThan' || filter.condition === 'lessThan') {
+        if (!String(filter.value ?? '').trim()) return true;
         const threshold = Number(filter.value);
         if (!Number.isFinite(threshold)) return true;
+        if (!numericValues(cell.value).length) return false;
         return filter.condition === 'greaterThan'
             ? numericValue(cell.value) > threshold
             : numericValue(cell.value) < threshold;
@@ -295,10 +305,23 @@ function createFilterGroup() {
     };
 }
 
+function isActiveFilterRule(rule) {
+    if (!rule.columnKey) return false;
+    if (['isEmpty', 'notEmpty'].includes(rule.condition)) return true;
+    if (['greaterThan', 'lessThan'].includes(rule.condition)) {
+        return String(rule.value ?? '').trim() !== '' && Number.isFinite(Number(rule.value));
+    }
+    return selectedFilterValues(rule.value).some(value => String(value).trim() !== '');
+}
+
+function hasActiveFilterGroup(group) {
+    return (group.rules || []).some(isActiveFilterRule) || (group.groups || []).some(hasActiveFilterGroup);
+}
+
 function matchesFilterGroup(row, group) {
     const results = [
-        ...(Array.isArray(group?.rules) ? group.rules : []).map(rule => matchesFilter(row, rule)),
-        ...(Array.isArray(group?.groups) ? group.groups : []).map(childGroup => matchesFilterGroup(row, childGroup)),
+        ...(group.rules || []).filter(isActiveFilterRule).map(rule => matchesFilter(row, rule)),
+        ...(group.groups || []).filter(hasActiveFilterGroup).map(child => matchesFilterGroup(row, child)),
     ];
     if (!results.length) return true;
     return group.operator === 'or' ? results.some(Boolean) : results.every(Boolean);
@@ -310,9 +333,9 @@ function formatGroupValue(row, columnKey) {
 }
 
 function groupValueIdentity(value) {
-    if (Array.isArray(value)) return `array:${value.map(groupValueIdentity).join('|')}`;
+    if (Array.isArray(value)) return `array:${JSON.stringify([...new Set(value.map(groupValueIdentity))].sort())}`;
     if (value && typeof value === 'object') {
-        return value.id ? `id:${value.id}` : `value:${textValue(value)}`;
+        return value.id?.startsWith('rec') ? `id:${value.id}` : `value:${cleanDropdownLabel(textValue(value))}`;
     }
     return `value:${String(value)}`;
 }
@@ -355,7 +378,38 @@ function buildRows(records, source, table, columns, propertyValues) {
     }));
 }
 
-function CostPortfolioGrid({tables, ddcRecords, csCoeRecords, propertyValues}) {
+function enrichPortfolioRows(rows, tables, portfolioRecords, propertyValues) {
+    const portfolioById = new Map(portfolioRecords.map(record => [record.id, record]));
+    return rows.map(row => {
+        const table = row.source === 'DDC' ? tables.ddc : tables.csCoe;
+        const linkKey = row.source === 'DDC' ? 'ddcPortfolioLink' : 'csCoePortfolioLink';
+        const linkField = getConfiguredField(table, propertyValues[linkKey]);
+        const links = linkField ? row.record.getCellValue(linkField) || [] : [];
+        const linkedRecords = [...new Set(links.map(link => link.id))].map(id => portfolioById.get(id)).filter(Boolean);
+        const cells = {...row.cells};
+        COLUMNS.forEach(column => {
+            if (cells[column.key].field) return;
+            const field = getConfiguredField(tables.portfolio, propertyValues[portfolioFieldKey(column)]);
+            if (field && linkedRecords.length === 1) {
+                const record = linkedRecords[0];
+                cells[column.key] = {field, value: record.getCellValue(field), record, contributions: [{id: `${record.id}:${field.id}`, value: record.getCellValue(field)}]};
+            } else if (field && linkedRecords.length > 1) {
+                cells[column.key] = {field: null, value: linkedRecords.map(record => record.getCellValue(field)), contributions: linkedRecords.map(record => ({id: `${record.id}:${field.id}`, value: record.getCellValue(field)}))};
+            } else if (column.key === 'portfolioName' && links.length) {
+                cells[column.key] = {field: null, value: links};
+            }
+        });
+        return {...row, cells};
+    });
+}
+
+function getVisibleRange(scrollTop, viewportHeight, entryCount) {
+    const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - 8);
+    const end = Math.min(entryCount, Math.ceil((scrollTop + viewportHeight) / ROW_HEIGHT) + 8);
+    return {start, end};
+}
+
+function CostPortfolioGrid({tables, ddcRecords, csCoeRecords, portfolioRecords = [], propertyValues}) {
     const headers = useMemo(() => Object.fromEntries(COLUMNS.map(column => [
         column.key,
         propertyValues[headerKey(column)] ?? column.defaultHeader,
@@ -367,12 +421,15 @@ function CostPortfolioGrid({tables, ddcRecords, csCoeRecords, propertyValues}) {
     const columnFields = useMemo(() => Object.fromEntries(COLUMNS.map(column => [
         column.key,
         getConfiguredField(tables.ddc, propertyValues[ddcFieldKey(column)]) ||
-            getConfiguredField(tables.csCoe, propertyValues[csCoeFieldKey(column)]),
-    ])), [propertyValues, tables.csCoe, tables.ddc]);
+            getConfiguredField(tables.csCoe, propertyValues[csCoeFieldKey(column)]) ||
+            getConfiguredField(tables.portfolio, propertyValues[portfolioFieldKey(column)]),
+    ])), [propertyValues, tables.csCoe, tables.ddc, tables.portfolio]);
     const selectableColumns = useMemo(() => configuredColumns(COLUMNS, headers, column => (
         getConfiguredField(tables.ddc, propertyValues[ddcFieldKey(column)]) ||
-        getConfiguredField(tables.csCoe, propertyValues[csCoeFieldKey(column)])
-    )), [headers, propertyValues, tables.csCoe, tables.ddc]);
+        getConfiguredField(tables.csCoe, propertyValues[csCoeFieldKey(column)]) ||
+        getConfiguredField(tables.portfolio, propertyValues[portfolioFieldKey(column)]) ||
+        (column.key === 'portfolioName' && (propertyValues.ddcPortfolioLink || propertyValues.csCoePortfolioLink))
+    )), [headers, propertyValues, tables.csCoe, tables.ddc, tables.portfolio]);
     const visibleColumns = useMemo(
         () => selectableColumns.filter(column => propertyValues[visibleKey(column)] !== false),
         [propertyValues, selectableColumns],
@@ -381,17 +438,17 @@ function CostPortfolioGrid({tables, ddcRecords, csCoeRecords, propertyValues}) {
         () => selectableColumns.filter(column => propertyValues[topFilterKey(column)] === true),
         [propertyValues, selectableColumns],
     );
-    const rows = useMemo(() => [
+    const rows = useMemo(() => enrichPortfolioRows([
         ...buildRows(ddcRecords, 'DDC', tables.ddc, COLUMNS, propertyValues),
         ...buildRows(csCoeRecords, 'CS CoE', tables.csCoe, COLUMNS, propertyValues),
-    ], [csCoeRecords, ddcRecords, propertyValues, tables.csCoe, tables.ddc]);
+    ], tables, portfolioRecords, propertyValues), [csCoeRecords, ddcRecords, portfolioRecords, propertyValues, tables]);
 
     const [filterOpen, setFilterOpen] = useState(false);
     const [filterExpression, setFilterExpression] = useState({operator: 'and', rules: [], groups: []});
     const [topFilters, setTopFilters] = useState({});
     const [openPickerId, setOpenPickerId] = useState('');
     const [topFilterSearches, setTopFilterSearches] = useState({});
-    const [groupKey, setGroupKey] = useState('');
+    const [groupKey, setGroupKey] = useState(() => propertyValues.ddcPortfolioLink || propertyValues.csCoePortfolioLink ? 'portfolioName' : '');
     const [sort, setSort] = useState({columnKey: '', direction: 'asc'});
     const [collapsedGroups, setCollapsedGroups] = useState(new Set());
     const [expandedEmptyGroupIds, setExpandedEmptyGroupIds] = useState(new Set());
@@ -401,6 +458,16 @@ function CostPortfolioGrid({tables, ddcRecords, csCoeRecords, propertyValues}) {
     const [widths, setWidths] = useState(() => Object.fromEntries(COLUMNS.map(column => [column.key, column.numeric ? 168 : 190])));
     const viewportRef = useRef(null);
     const footerScrollRef = useRef(null);
+    const [viewportHeight, setViewportHeight] = useState(0);
+    const [viewportOuterHeight, setViewportOuterHeight] = useState(0);
+    useEffect(() => {
+        const viewport = viewportRef.current;
+        const measure = () => { setViewportHeight(viewport.clientHeight); setViewportOuterHeight(viewport.offsetHeight); };
+        measure();
+        const observer = new ResizeObserver(measure);
+        observer.observe(viewport);
+        return () => observer.disconnect();
+    }, []);
 
     useEffect(() => {
         const selectableKeys = new Set(selectableColumns.map(column => column.key));
@@ -428,15 +495,18 @@ function CostPortfolioGrid({tables, ddcRecords, csCoeRecords, propertyValues}) {
     const topFilterDropdownKeys = useMemo(() => new Set(topFilterColumns.filter(column => getFilterCapabilities([
         getConfiguredField(tables.ddc, propertyValues[ddcFieldKey(column)]),
         getConfiguredField(tables.csCoe, propertyValues[csCoeFieldKey(column)]),
-    ], rows.map(row => row.cells[column.key])).options).map(column => column.key)), [propertyValues, rows, tables.csCoe, tables.ddc, topFilterColumns]);
+        getConfiguredField(tables.portfolio, propertyValues[portfolioFieldKey(column)]),
+    ], rows.map(row => row.cells[column.key])).options).map(column => column.key)), [propertyValues, rows, tables.csCoe, tables.ddc, tables.portfolio, topFilterColumns]);
     const numericColumnKeys = useMemo(() => new Set(COLUMNS.filter(column => (
         column.numeric || isNumericField(getConfiguredField(tables.ddc, propertyValues[ddcFieldKey(column)])) ||
-        isNumericField(getConfiguredField(tables.csCoe, propertyValues[csCoeFieldKey(column)]))
-    )).map(column => column.key)), [propertyValues, tables.csCoe, tables.ddc]);
+        isNumericField(getConfiguredField(tables.csCoe, propertyValues[csCoeFieldKey(column)])) ||
+        isNumericField(getConfiguredField(tables.portfolio, propertyValues[portfolioFieldKey(column)]))
+    )).map(column => column.key)), [propertyValues, tables.csCoe, tables.ddc, tables.portfolio]);
     const selectPresentationColumnKeys = useMemo(() => new Set(selectableColumns.filter(column => [
         getConfiguredField(tables.ddc, propertyValues[ddcFieldKey(column)]),
         getConfiguredField(tables.csCoe, propertyValues[csCoeFieldKey(column)]),
-    ].some(isSingleSelectResult)).map(column => column.key)), [propertyValues, selectableColumns, tables.csCoe, tables.ddc]);
+        getConfiguredField(tables.portfolio, propertyValues[portfolioFieldKey(column)]),
+    ].some(isSingleSelectResult)).map(column => column.key)), [propertyValues, selectableColumns, tables.csCoe, tables.ddc, tables.portfolio]);
     const filteredRows = useMemo(() => rows.filter(row => (
         matchesFilterGroup(row, filterExpression) && topFilterColumns.every(column => (
             selectedFilterValues(topFilters[column.key]).length === 0 || selectedFilterValues(topFilters[column.key])
@@ -470,8 +540,18 @@ function CostPortfolioGrid({tables, ddcRecords, csCoeRecords, propertyValues}) {
     const frozenPaneWidth = 44 + (firstVisibleColumn ? widths[firstVisibleColumn.key] : 0);
     const templateColumns = scrollColumns.map(column => `${widths[column.key]}px`).join(' ') || '1px';
     const gridWidth = scrollColumns.reduce((total, column) => total + widths[column.key], 0);
-    const firstVisible = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - 8);
-    const visibleEntries = entries.slice(firstVisible, firstVisible + 28);
+    const {start: firstVisible, end: lastVisible} = getVisibleRange(scrollTop, viewportHeight, entries.length);
+    const visibleEntries = entries.slice(firstVisible, lastVisible);
+    useEffect(() => {
+        if (viewportRef.current) viewportRef.current.scrollTop = 0;
+        setScrollTop(0);
+    }, [filterExpression, topFilters, showSelectedOnly, groupKey, collapsedGroups, expandedEmptyGroupIds]);
+    useEffect(() => {
+        const viewport = viewportRef.current;
+        const maximum = Math.max(0, ROW_HEIGHT + entries.length * ROW_HEIGHT - viewport.clientHeight);
+        if (viewport.scrollTop > maximum) viewport.scrollTop = maximum;
+        setScrollTop(viewport.scrollTop);
+    }, [entries.length, viewportHeight]);
 
     function toggleSelected(id) {
         setSelectedIds(previous => {
@@ -560,7 +640,7 @@ function CostPortfolioGrid({tables, ddcRecords, csCoeRecords, propertyValues}) {
                     return <div className="top-filter-chip" key={column.key}>
                         <span>{headers[column.key]}</span>
                         {topFilterDropdownKeys.has(column.key)
-                            ? <details className="top-filter-picker filter-option-picker" open={openPickerId === `top:${column.key}`} onToggle={event => setOpenPickerId(event.currentTarget.open ? `top:${column.key}` : '')}><summary>{selectedValues.length ? `${selectedValues.length} selected` : 'All'}</summary><div className="top-filter-options"><input className="filter-option-search" type="search" value={optionSearch} onChange={event => setTopFilterSearches(current => ({...current, [column.key]: event.target.value}))} placeholder="Search options" /><div className="top-filter-actions"><button type="button" onClick={() => setTopFilters(current => ({...current, [column.key]: topFilterOptions[column.key]}))}>Select all</button><button type="button" onClick={() => setTopFilters(current => ({...current, [column.key]: []}))}>Clear</button></div>{visibleOptions.map(value => <label key={value}><input type="checkbox" checked={selectedValues.includes(value)} onChange={() => setTopFilters(current => { const values = selectedFilterValues(current[column.key]); return {...current, [column.key]: values.includes(value) ? values.filter(selected => selected !== value) : [...values, value]}; })} />{value}</label>)}</div></details>
+                            ? <details className="top-filter-picker filter-option-picker" open={openPickerId === `top:${column.key}`} onToggle={event => { const open = event.currentTarget.open; setOpenPickerId(current => open ? `top:${column.key}` : current === `top:${column.key}` ? '' : current); }}><summary>{selectedValues.length ? `${selectedValues.length} selected` : 'All'}</summary><div className="top-filter-options"><input className="filter-option-search" type="search" value={optionSearch} onChange={event => setTopFilterSearches(current => ({...current, [column.key]: event.target.value}))} placeholder="Search options" /><div className="top-filter-actions"><button type="button" onClick={() => setTopFilters(current => ({...current, [column.key]: topFilterOptions[column.key]}))}>Select all</button><button type="button" onClick={() => setTopFilters(current => ({...current, [column.key]: []}))}>Clear</button></div>{visibleOptions.map(value => <label key={value}><input type="checkbox" checked={selectedValues.includes(value)} onChange={() => setTopFilters(current => { const values = selectedFilterValues(current[column.key]); return {...current, [column.key]: values.includes(value) ? values.filter(selected => selected !== value) : [...values, value]}; })} />{value}</label>)}</div></details>
                             : <select value={topFilters[column.key] || ''} onChange={event => setTopFilters(current => ({...current, [column.key]: event.target.value}))}>
                                 <option value="">All</option>
                                 {topFilterOptions[column.key].map(value => <option key={value} value={value}>{value}</option>)}
@@ -582,7 +662,7 @@ function CostPortfolioGrid({tables, ddcRecords, csCoeRecords, propertyValues}) {
                 ))}
                 <button type="button" onClick={() => setFilterExpression(current => ({...current, rules: [...current.rules, createFilterRule()]}))}>Add filter</button>
                 <button type="button" onClick={() => setFilterExpression(current => ({...current, groups: [...current.groups, createFilterGroup()]}))}>Add group</button>
-                <button type="button" onClick={() => setFilterExpression({operator: 'and', rules: [], groups: []})}>Clear all</button>
+                <button type="button" onClick={() => { setFilterExpression({operator: 'and', rules: [], groups: []}); setTopFilters({}); setShowSelectedOnly(false); }}>Clear all</button>
                 <button type="button" onClick={() => setFilterOpen(false)}>Close</button>
             </div>}
             <div className="grid-shell" style={{gridTemplateColumns: `${frozenPaneWidth}px minmax(0, 1fr)`}}>
@@ -591,7 +671,7 @@ function CostPortfolioGrid({tables, ddcRecords, csCoeRecords, propertyValues}) {
                         <div className="grid-checkbox"><input type="checkbox" checked={filteredRows.length > 0 && filteredRows.every(row => selectedIds.has(row.id))} onChange={toggleAll} /></div>
                         {firstVisibleColumn && <div className="grid-header-cell" title={headers[firstVisibleColumn.key]}>{headers[firstVisibleColumn.key]}<span className="resize-handle" onMouseDown={event => resizeColumn(event, firstVisibleColumn.key)} /></div>}
                     </div>
-                    <div className="frozen-body-pane">
+                    <div className="frozen-body-pane" style={{height: Math.max(0, viewportOuterHeight - ROW_HEIGHT)}}>
                         <div style={{transform: `translateY(${firstVisible * ROW_HEIGHT - scrollTop}px)`}}>
                             {visibleEntries.map(entry => entry.type === 'group'
                                 ? <FrozenGroupRow key={`frozen-group-${entry.group.id}`} group={entry.group} groupKey={groupKey} column={firstVisibleColumn} width={frozenPaneWidth} headers={headers} numericColumnKeys={numericColumnKeys} aggregationModes={aggregationModes} collapsed={entry.group.isEmpty ? !expandedEmptyGroupIds.has(entry.group.id) : collapsedGroups.has(entry.group.id)} onToggle={() => toggleGroup(entry.group)} />
@@ -641,8 +721,8 @@ function GroupRow({group, columns, templateColumns, numericColumnKeys, aggregati
 }
 
 function GridCellValue({record, cell, fallback, useSelectPresentation}) {
-    if (!cell.field) return fallback;
-    return <div className={`cell-content${useSelectPresentation ? ' single-select-result-cell' : ''}`}><CellRenderer record={record} field={cell.field} shouldWrap={false} /></div>;
+    if (!cell.field) return cell.value === null || cell.value === undefined ? fallback : textValue(cell.value);
+    return <div className={`cell-content${useSelectPresentation ? ' single-select-result-cell' : ''}`}><CellRenderer record={cell.record || record} field={cell.field} shouldWrap={false} /></div>;
 }
 
 function DataRow({row, columns, templateColumns, columnFields, selectPresentationColumnKeys}) {
@@ -650,7 +730,7 @@ function DataRow({row, columns, templateColumns, columnFields, selectPresentatio
         {columns.map(column => {
             const cell = row.cells[column.key];
             const field = cell.field || columnFields[column.key];
-            const fallback = column.numeric ? 0 : '';
+            const fallback = '';
             const useSelectPresentation = shouldUseSelectPresentation(cell.field, selectPresentationColumnKeys.has(column.key));
             return <div className="grid-cell" key={column.key}><GridCellValue record={row.record} cell={cell} fallback={field ? fallback : ''} useSelectPresentation={useSelectPresentation} /></div>;
         })}
@@ -671,7 +751,7 @@ function FrozenDataRow({row, column, width, columnFields, selectPresentationColu
     if (!column) return <div className="frozen-row" style={{gridTemplateColumns: '44px'}}><div className="grid-checkbox"><input type="checkbox" checked={selected} onChange={onToggle} /></div></div>;
     const cell = row.cells[column.key];
     const field = cell.field || columnFields[column.key];
-    const fallback = column.numeric ? 0 : '';
+    const fallback = '';
     return <div className="frozen-row" style={{gridTemplateColumns: `44px ${Math.max(0, width - 44)}px`}}>
         <div className="grid-checkbox"><input type="checkbox" checked={selected} onChange={onToggle} /></div>
         <div className="grid-cell"><GridCellValue record={row.record} cell={cell} fallback={field ? fallback : ''} useSelectPresentation={shouldUseSelectPresentation(cell.field, selectPresentationColumnKeys.has(column.key))} /></div>
@@ -711,6 +791,7 @@ function FilterRuleEditor({rule, columns, headers, rows, tables, propertyValues,
     const sourceFields = column ? [
         getConfiguredField(tables.ddc, propertyValues[ddcFieldKey(column)]),
         getConfiguredField(tables.csCoe, propertyValues[csCoeFieldKey(column)]),
+        getConfiguredField(tables.portfolio, propertyValues[portfolioFieldKey(column)]),
     ] : [];
     const sourceCells = column ? rows.map(row => row.cells[column.key]) : [];
     const capabilities = getFilterCapabilities(sourceFields, sourceCells);
@@ -722,6 +803,7 @@ function FilterRuleEditor({rule, columns, headers, rows, tables, propertyValues,
         const nextFields = nextColumn ? [
             getConfiguredField(tables.ddc, propertyValues[ddcFieldKey(nextColumn)]),
             getConfiguredField(tables.csCoe, propertyValues[csCoeFieldKey(nextColumn)]),
+            getConfiguredField(tables.portfolio, propertyValues[portfolioFieldKey(nextColumn)]),
         ] : [];
         const nextCells = nextColumn ? rows.map(row => row.cells[nextColumn.key]) : [];
         const nextCapabilities = getFilterCapabilities(nextFields, nextCells);
@@ -770,17 +852,31 @@ function ExtensionApp({tableIds}) {
         csCoe: getSelectedTable(base, customPropertyValueByKey[TABLE_KEYS.csCoe]?.id),
         portfolio: getSelectedTable(base, customPropertyValueByKey[TABLE_KEYS.portfolio]?.id),
     };
+    if (errorState) return <div className="grid-error">Unable to load mappings: {errorState.error.message}</div>;
+    if (!tables.ddc || !tables.csCoe) return <div className="grid-error">Select the DDC and CS CoE source tables in the interface settings.</div>;
+    if (tables.ddc.id === tables.csCoe.id) return <div className="grid-error">Choose different DDC and CS CoE source tables to avoid duplicate costs.</div>;
+    if (tableIds[TABLE_KEYS.portfolio] && !tables.portfolio) return <div className="grid-error">The selected portfolio table is unavailable. Select it again in the interface settings.</div>;
+    for (const [key, table] of [['ddcPortfolioLink', tables.ddc], ['csCoePortfolioLink', tables.csCoe]]) {
+        if (!customPropertyValueByKey[key]) continue;
+        const field = getConfiguredField(table, customPropertyValueByKey[key]);
+        if (!tables.portfolio || field?.type !== 'multipleRecordLinks' || field.options?.linkedTableId !== tables.portfolio.id) {
+            return <div className="grid-error">Select a valid {key === 'ddcPortfolioLink' ? 'DDC' : 'CS CoE'} link to the portfolio table in the interface settings.</div>;
+        }
+    }
+    return <SourceRecords key={JSON.stringify(Object.entries(customPropertyValueByKey).map(([key, value]) => [key, value?.id ?? value]))} tables={tables} propertyValues={customPropertyValueByKey} />;
+}
+
+function SourceRecords({tables, propertyValues}) {
     const ddcRecords = useRecords(tables.ddc);
     const csCoeRecords = useRecords(tables.csCoe);
-    useRecords(tables.portfolio);
-    const configByTableId = buildConfigByTableId(tables, customPropertyValueByKey);
-    useEffect(() => console.info('[Cost portfolio grid] source row counts', {
-        ddc: ddcRecords.length,
-        csCoe: csCoeRecords.length,
-        configByTableId,
-    }), [configByTableId, csCoeRecords.length, ddcRecords.length]);
-    if (errorState) return <div className="grid-error">Unable to load mappings: {errorState.error.message}</div>;
-    return <CostPortfolioGrid tables={tables} ddcRecords={ddcRecords} csCoeRecords={csCoeRecords} propertyValues={customPropertyValueByKey} />;
+    return tables.portfolio
+        ? <PortfolioRecords tables={tables} ddcRecords={ddcRecords} csCoeRecords={csCoeRecords} propertyValues={propertyValues} />
+        : <CostPortfolioGrid tables={tables} ddcRecords={ddcRecords} csCoeRecords={csCoeRecords} propertyValues={propertyValues} />;
+}
+
+function PortfolioRecords(props) {
+    const portfolioRecords = useRecords(props.tables.portfolio);
+    return <CostPortfolioGrid {...props} portfolioRecords={portfolioRecords} />;
 }
 
 function App() {
