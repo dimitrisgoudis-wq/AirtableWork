@@ -1,0 +1,357 @@
+/* 
+ * Airtable Interface Extensions Stylesheet with Tailwind CSS
+ * ============================================================
+ * This file provides Tailwind CSS with design tokens mapped from Airtable's design system. 
+ *
+ * How it works:
+ * -------------
+ * - Tailwind CSS v3 is imported via @tailwind directives below
+ * - Custom design tokens are configured in `tailwind.config.js`
+ * - You can use Tailwind utility classes that automatically match Airtable's design system
+ * - Example: `bg-gray-gray50` uses Airtable's gray50 color
+ *
+ * **This Stylesheet is optional!**
+ * --------------------------------
+ * You are *not* required to use Tailwind. To opt-out:
+ * 1. Remove the `import './style.css';` line from `index.tsx`.
+ * 2. Remove the bundler configuration from `block.json`.
+ * 3. (Optional) Delete the `style.css`, `bundler.js`, and `tailwind.config.js` files.
+ *
+ * Using Tailwind classes:
+ * ----------------------
+ * You can use Tailwind classes that are mapped to Airtable's design tokens:
+ * - Colors: `text-gray-gray900` (uses Airtable's gray900), `bg-blue-blue` (uses Airtable's blue)
+ * - Spacing: `p-4` (16px), `m-2` (8px) 
+ * - Typography: `text-base` (13px, Airtable's body-default), `font-display` (Inter Display)
+ * - Shadows: `shadow-sm` (uses Airtable's elevation-low)
+ */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+.grid-app {
+    min-height: 100vh;
+    background: rgb(246, 248, 252);
+    color: rgb(49, 53, 62);
+    font-family: ui-sans-serif, system-ui, sans-serif;
+}
+
+.grid-toolbar,
+.filter-panel {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 14px;
+    background: white;
+    border-bottom: 1px solid rgb(218, 222, 230);
+    font-size: 12px;
+}
+
+.grid-toolbar strong { margin-right: 8px; }
+.grid-toolbar button,
+.grid-toolbar select,
+.filter-panel button,
+.filter-panel select,
+.filter-panel input {
+    height: 28px;
+    border: 1px solid rgb(196, 199, 205);
+    border-radius: 4px;
+    background: white;
+    padding: 0 8px;
+    font: inherit;
+}
+.grid-toolbar label { display: flex; align-items: center; gap: 4px; }
+.toolbar-export { margin-left: auto; color: rgb(13, 82, 172); }
+.filter-panel { background: rgb(249, 250, 251); }
+.filter-builder {
+    position: relative;
+    z-index: 30;
+    align-items: flex-start;
+    flex-wrap: wrap;
+}
+.filter-rule,
+.filter-group {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.filter-group {
+    width: 100%;
+    padding: 8px;
+    border: 1px solid rgb(196, 199, 205);
+    border-radius: 5px;
+    background: white;
+}
+.rule-value-picker {
+    position: relative;
+    min-width: 180px;
+}
+.rule-value-picker summary {
+    display: flex;
+    align-items: center;
+    min-width: 180px;
+    height: 28px;
+    padding: 0 8px;
+    border: 1px solid rgb(196, 199, 205);
+    border-radius: 4px;
+    background: white;
+    cursor: pointer;
+    list-style: none;
+}
+.rule-value-picker summary::-webkit-details-marker { display: none; }
+.rule-value-picker summary::after { content: '⌄'; margin-left: auto; font-size: 14px; }
+.rule-value-picker .top-filter-options {
+    top: 32px;
+    right: auto;
+    left: 0;
+}
+.selected-rows-filter {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 28px;
+    padding: 0 4px;
+    white-space: nowrap;
+}
+.multi-value-picker { position: relative; }
+.multi-value-picker summary {
+    display: flex;
+    align-items: center;
+    min-width: 118px;
+    height: 28px;
+    padding: 0 8px;
+    border: 1px solid rgb(196, 199, 205);
+    border-radius: 4px;
+    background: white;
+    cursor: pointer;
+    list-style: none;
+}
+.multi-value-picker summary::-webkit-details-marker { display: none; }
+.multi-value-picker summary::after { content: '⌄'; margin-left: auto; font-size: 14px; }
+.multi-value-options {
+    position: absolute;
+    z-index: 8;
+    top: 32px;
+    left: 0;
+    display: grid;
+    gap: 5px;
+    width: max-content;
+    min-width: 190px;
+    max-width: 320px;
+    max-height: 250px;
+    overflow: auto;
+    padding: 8px;
+    border: 1px solid rgb(196, 199, 205);
+    border-radius: 5px;
+    background: white;
+    box-shadow: 0 5px 18px rgb(0 0 0 / 14%);
+}
+.multi-value-options label { display: flex; align-items: center; gap: 7px; cursor: pointer; }
+.top-filter-bar {
+    display: flex;
+    position: relative;
+    z-index: 20;
+    flex-wrap: wrap;
+    gap: 10px;
+    overflow: visible;
+    padding: 10px 14px;
+    background: white;
+    border-bottom: 1px solid rgb(218, 222, 230);
+}
+.top-filter-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    flex: 0 0 auto;
+    height: 34px;
+    padding: 0 8px 0 10px;
+    border: 1px solid rgb(218, 222, 230);
+    border-radius: 7px;
+    background: white;
+    font-size: 12px;
+    font-weight: 500;
+}
+.top-filter-chip select {
+    min-width: 88px;
+    max-width: 180px;
+    border: 0;
+    background: transparent;
+    font: inherit;
+    color: rgb(49, 53, 62);
+}
+.top-filter-picker { position: relative; }
+.top-filter-picker summary {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 72px;
+    cursor: pointer;
+    list-style: none;
+}
+.top-filter-picker summary::-webkit-details-marker { display: none; }
+.top-filter-picker summary::after { content: '⌄'; margin-left: auto; font-size: 14px; }
+.top-filter-options {
+    position: absolute;
+    z-index: 14;
+    top: 27px;
+    right: 0;
+    display: grid;
+    gap: 5px;
+    width: max-content;
+    min-width: 190px;
+    max-width: 320px;
+    max-height: 250px;
+    overflow: auto;
+    padding: 8px;
+    border: 1px solid rgb(196, 199, 205);
+    border-radius: 5px;
+    background: white;
+    box-shadow: 0 5px 18px rgb(0 0 0 / 14%);
+}
+.filter-option-search {
+    width: 100%;
+    height: 28px;
+    padding: 0 8px;
+    border: 1px solid rgb(196, 199, 205);
+    border-radius: 4px;
+    background: white;
+    font: inherit;
+}
+.top-filter-actions {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid rgb(229, 233, 240);
+}
+.top-filter-actions button {
+    border: 0;
+    padding: 0;
+    background: transparent;
+    color: rgb(13, 82, 172);
+    font: inherit;
+    cursor: pointer;
+}
+.top-filter-options label { display: flex; align-items: center; gap: 7px; cursor: pointer; }
+
+.grid-shell {
+    --grid-viewport-height: calc(100vh - 150px);
+    --grid-header-height: 40px;
+    display: grid;
+    background: white;
+    border-top: 1px solid rgb(218, 222, 230);
+    overflow: hidden;
+}
+.frozen-grid-pane,
+.scroll-grid-pane {
+    min-width: 0;
+    overflow: hidden;
+}
+.frozen-grid-pane { border-right: 1px solid rgb(196, 199, 205); }
+.grid-header-scroll,
+.grid-footer-scroll {
+    width: 100%;
+    overflow: hidden;
+}
+.grid-header,
+.grid-row,
+.group-row,
+.grid-footer {
+    display: grid;
+    min-width: max-content;
+    height: 40px;
+    grid-auto-rows: 40px;
+    overflow: hidden;
+}
+.frozen-header-pane,
+.frozen-footer-pane,
+.frozen-row {
+    display: grid;
+    height: 40px;
+    grid-auto-rows: 40px;
+    overflow: hidden;
+}
+.frozen-header-pane,
+.frozen-footer-pane {
+    position: relative;
+    background: rgb(246, 248, 252);
+}
+.frozen-header-pane { border-bottom: 1px solid rgb(196, 199, 205); }
+.frozen-footer-pane { border-top: 2px solid rgb(196, 199, 205); font-weight: 600; }
+.frozen-body-pane {
+    position: relative;
+    /* The scroll pane's viewport includes its header; this pane starts below its header. */
+    height: calc(var(--grid-viewport-height) - var(--grid-header-height));
+    min-height: 300px;
+    overflow: hidden;
+    background: white;
+}
+.frozen-row { background: white; }
+.frozen-group-row { background: rgb(241, 245, 255); font-weight: 600; }
+.frozen-row .grid-cell { contain: layout paint; }
+.frozen-row .group-cell { background: rgb(241, 245, 255); }
+.grid-header { position: sticky; top: 0; z-index: 3; background: rgb(246, 248, 252); border-bottom: 1px solid rgb(196, 199, 205); }
+.grid-header-cell,
+.grid-cell,
+.group-cell,
+.grid-total-cell,
+.grid-checkbox,
+.grid-total-label,
+.group-title {
+    min-width: 0;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    padding: 0 9px;
+    border-right: 1px solid rgb(229, 233, 240);
+    border-bottom: 1px solid rgb(229, 233, 240);
+    overflow: hidden;
+}
+.grid-header-cell { position: relative; font-size: 11px; font-weight: 600; white-space: nowrap; text-overflow: ellipsis; }
+.resize-handle { position: absolute; top: 0; right: -3px; width: 7px; height: 100%; cursor: col-resize; z-index: 4; }
+.resize-handle:hover { background: rgb(22, 110, 225); }
+.grid-viewport { height: var(--grid-viewport-height); min-height: 340px; overflow: auto; }
+.grid-row:hover { background: rgb(241, 245, 255); }
+.grid-cell {
+    font-size: 12px;
+    white-space: nowrap;
+    contain: layout paint;
+}
+.cell-content {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.cell-content > * {
+    min-width: 0 !important;
+    max-width: 100% !important;
+    overflow: hidden !important;
+    white-space: nowrap !important;
+    text-overflow: ellipsis !important;
+}
+/* Formula and lookup results inherit the select presentation of their mapped column. */
+.single-select-result-cell > * {
+    display: inline-flex !important;
+    align-items: center;
+    width: auto !important;
+    max-width: 100% !important;
+    min-height: 22px;
+    padding: 0 8px;
+    border-radius: 11px;
+    background: rgb(226, 235, 252);
+    color: rgb(20, 69, 145);
+}
+.grid-checkbox { justify-content: center; padding: 0; }
+.grid-footer { position: relative; z-index: 2; background: rgb(246, 248, 252); border-top: 2px solid rgb(196, 199, 205); font-weight: 600; }
+.grid-total-label { font-size: 12px; }
+.group-row { background: rgb(241, 245, 255); font-weight: 600; }
+.group-title { justify-content: center; padding: 0; border: 0; border-right: 1px solid rgb(209, 226, 255); background: transparent; cursor: pointer; }
+.group-cell { border-color: rgb(209, 226, 255); font-size: 12px; }
+.group-cell button { border: 0; background: transparent; padding: 0; font: inherit; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.grid-error { padding: 24px; color: rgb(220, 4, 59); }
