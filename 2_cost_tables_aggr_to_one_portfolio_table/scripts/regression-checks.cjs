@@ -159,7 +159,7 @@ const firstTable = {id: 'tblFirst'};
 const base = {tables: [firstTable], getTableByIdIfExists: id => id === firstTable.id ? firstTable : null};
 assert(getSelectedTable(base, undefined) === null && getSelectedTable(base, 'deleted') === null, 'Missing tables must never fall back to the first table');
 assert(getSelectedTable(base, {id: 'tblFirst'}) === firstTable, 'Table model settings must resolve correctly');
-const {enrichPortfolioRows} = new Function('COLUMNS', 'getConfiguredField', 'portfolioFieldKey', extract('function enrichPortfolioRows', 'function getVisibleRange') + ';return {enrichPortfolioRows};')([{key: 'x'}, {key: 'portfolioName'}], getConfiguredField, column => column.key + 'PortfolioField');
+const {enrichPortfolioRows} = new Function('COLUMNS', 'getConfiguredField', 'portfolioFieldKey', 'textValue', extract('function enrichPortfolioRows', 'function getVisibleRange') + ';return {enrichPortfolioRows};')([{key: 'x'}, {key: 'portfolioName'}], getConfiguredField, column => column.key + 'PortfolioField', textValue);
 const link = {id: 'fldLink'};
 const detail = {id: 'fldDetail'};
 const table = {getFieldIfExists: id => id === link.id ? link : id === detail.id ? detail : null};
@@ -169,4 +169,17 @@ const enriched = enrichPortfolioRows([cost, {...cost, id: 'cost2'}], {ddc: table
 assert(enriched.length === 2 && enriched[0].cells.x.record === portfolioRecord && enriched[0].cells.x.value === 50, 'Portfolio join must resolve the correct record without multiplying costs');
 assert(aggregateColumns(enriched, new Set(['x']), {}).x === 50, 'Repeated portfolio details must count only once in totals');
 assert(textValue(enriched[0].cells.portfolioName.value) === 'Portfolio A', 'Portfolio links must provide default portfolio labels');
+const blankMappedCost = {...cost, cells: {...cost.cells, portfolioName: {field: detail, value: null}}};
+const blankPortfolioRecord = {...portfolioRecord, getCellValue: () => null};
+for (const source of ['DDC', 'CS CoE']) {
+    for (const records of [[], [blankPortfolioRecord]]) {
+        const result = enrichPortfolioRows([{...blankMappedCost, source}], {ddc: table, csCoe: table, portfolio: table}, records, {
+            ddcPortfolioLink: link, csCoePortfolioLink: link, portfolioNamePortfolioField: detail,
+        });
+        assert(textValue(result[0].cells.portfolioName.value) === 'Portfolio A', 'A valid portfolio link must survive blank mapped values and unavailable portfolio records');
+        assert(createGroups(result, 'portfolioName')[0].isEmpty === false, 'Linked costs must not enter the empty portfolio group');
+    }
+}
+const namedCost = {...cost, cells: {...cost.cells, portfolioName: {field: detail, value: 'Explicit name'}}};
+assert(enrichPortfolioRows([namedCost], {ddc: table, portfolio: table}, [], {ddcPortfolioLink: link})[0].cells.portfolioName.value === 'Explicit name', 'Nonempty source mappings must retain precedence');
 console.log('Regression checks passed');

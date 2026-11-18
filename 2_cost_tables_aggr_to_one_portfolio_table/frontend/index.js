@@ -388,14 +388,17 @@ function enrichPortfolioRows(rows, tables, portfolioRecords, propertyValues) {
         const linkedRecords = [...new Set(links.map(link => link.id))].map(id => portfolioById.get(id)).filter(Boolean);
         const cells = {...row.cells};
         COLUMNS.forEach(column => {
-            if (cells[column.key].field) return;
+            // A configured but blank name must not hide the cost's portfolio link.
+            const hasPortfolioLabel = textValue(cells[column.key].value).trim() !== '';
+            if (cells[column.key].field && (column.key !== 'portfolioName' || hasPortfolioLabel)) return;
             const field = getConfiguredField(tables.portfolio, propertyValues[portfolioFieldKey(column)]);
             if (field && linkedRecords.length === 1) {
                 const record = linkedRecords[0];
                 cells[column.key] = {field, value: record.getCellValue(field), record, contributions: [{id: `${record.id}:${field.id}`, value: record.getCellValue(field)}]};
             } else if (field && linkedRecords.length > 1) {
                 cells[column.key] = {field: null, value: linkedRecords.map(record => record.getCellValue(field)), contributions: linkedRecords.map(record => ({id: `${record.id}:${field.id}`, value: record.getCellValue(field)}))};
-            } else if (column.key === 'portfolioName' && links.length) {
+            }
+            if (column.key === 'portfolioName' && links.length && !textValue(cells[column.key].value).trim()) {
                 cells[column.key] = {field: null, value: links};
             }
         });
