@@ -45,9 +45,7 @@ const eligibleColumns = configuredColumns(
 assert(eligibleColumns.map(column => column.key).join('|') === 'mapped', 'Unmapped or empty-header placeholders must not enter filter/group lists');
 assert(source.includes('headers={headers}') && source.includes('{headers[item.key]}</option>'), 'Filter rules must display configured mapped headers');
 assert(!source.includes('{item.defaultHeader}</option>'), 'Filter rules must not display placeholder field labels');
-assert(styles.includes('--grid-viewport-height: calc(100vh - 150px);'), 'Grid panes must share one viewport height');
-assert(styles.includes('height: calc(var(--grid-viewport-height) - var(--grid-header-height));'), 'Frozen body must reserve its separate header height');
-assert(styles.includes('.grid-viewport { height: var(--grid-viewport-height);'), 'Scrollable pane must use the shared viewport height');
+assert(styles.includes('.grid-viewport { flex: 1; min-height: 0; overflow: auto; }'), 'Grid viewport must fit available height');
 
 const behaviorHelpers = extract('function textValue', 'let filterRuleSequence = 0;');
 const {
@@ -60,7 +58,7 @@ const {
     matchesFilter,
 } = new Function(`${behaviorHelpers}; return {textValue, cellOptionLabels, filterValuesForColumn, aggregateColumns, getFilterCapabilities, getFilterConditions, matchesFilter};`)();
 const groupingHelper = extract('function formatGroupValue', 'function buildRows');
-const {formatGroupValue, groupValueIdentity, createGroups} = new Function('textValue', `${groupingHelper}; return {formatGroupValue, groupValueIdentity, createGroups};`)(textValue);
+const {formatGroupValue, groupValueIdentity, createGroups} = new Function('textValue', 'cleanDropdownLabel', `${groupingHelper}; return {formatGroupValue, groupValueIdentity, createGroups};`)(textValue, value => String(value).trim());
 
 const linkField = {type: 'multipleRecordLinks'};
 const selectField = {type: 'singleSelect'};
@@ -135,10 +133,40 @@ assert(source.includes('const firstColumnSubtotal = column && numericColumnKeys.
 assert(source.includes("group.isEmpty ? !expandedEmptyGroupIds.has(group.id) : collapsedGroups.has(group.id)"), 'Empty groups must start collapsed');
 
 const groupHelpers = extract('let filterRuleSequence = 0;', 'function formatGroupValue');
-const {createFilterGroup, matchesFilterGroup} = new Function('matchesFilter', `${groupHelpers}; return {createFilterGroup, matchesFilterGroup};`)((row, rule) => Boolean(row[rule.id]));
+const {createFilterGroup, matchesFilterGroup} = new Function('matchesFilter', 'selectedFilterValues', `${groupHelpers}; return {createFilterGroup, matchesFilterGroup};`)((row, rule) => Boolean(row[rule.id]), value => (Array.isArray(value) ? value : [value]).filter(Boolean));
 assert(Array.isArray(createFilterGroup().groups), 'New filter groups must include child-group storage');
 const row = {yes: true, no: false};
-assert(matchesFilterGroup(row, {operator: 'and', rules: [{id: 'yes'}, {id: 'no'}]}) === false, 'AND group behavior regressed');
-assert(matchesFilterGroup(row, {operator: 'or', rules: [{id: 'yes'}, {id: 'no'}]}) === true, 'OR group behavior regressed');
+assert(matchesFilterGroup(row, {operator: 'and', rules: [{id: 'yes', columnKey: 'x', condition: 'notEmpty'}, {id: 'no', columnKey: 'x', condition: 'notEmpty'}]}) === false, 'AND group behavior regressed');
+assert(matchesFilterGroup(row, {operator: 'or', rules: [{id: 'yes', columnKey: 'x', condition: 'notEmpty'}, {id: 'no', columnKey: 'x', condition: 'notEmpty'}]}) === true, 'OR group behavior regressed');
 
+// Audit reproductions: these failed before the fixes.
+const numericRow = value => ({record: {getCellValueAsString: () => ''}, cells: {x: {value}}});
+assert(aggregateColumns([numericRow([10, 20])], new Set(['x']), {}).x === 30, 'Numeric lookups must retain every value');
+assert(aggregateColumns([numericRow(-10), numericRow(null)], new Set(['x']), {x: 'max'}).x === -10, 'Blank cells must not override negative maxima');
+assert(!matchesFilter(numericRow(null), {columnKey: 'x', condition: 'lessThan', value: '5'}), 'Blank cells must not pass numeric comparisons');
+assert(matchesFilter(numericRow(-1), {columnKey: 'x', condition: 'greaterThan', value: ''}), 'Blank numeric input must not act as zero');
+const selectGroups = createGroups([numericRow({id: 'selA', name: 'Portfolio A'}), numericRow({id: 'selB', name: 'Portfolio A'})], 'x');
+assert(selectGroups.length === 1 && selectGroups[0].rows.length === 2, 'Same select labels across sources must group together');
+assert(!matchesFilterGroup(row, {operator: 'or', rules: [{id: 'no', columnKey: 'x', condition: 'notEmpty'}, {columnKey: ''}], groups: [{rules: [], groups: []}]}), 'Unfinished OR rules and empty groups must be ignored');
+assert(matchesFilterGroup(row, {operator: 'and', rules: [{columnKey: 'x', condition: 'greaterThan', value: ''}]}), 'An unfinished numeric condition must be ignored');
+const {getVisibleRange} = new Function('ROW_HEIGHT', extract('function getVisibleRange', 'function CostPortfolioGrid') + ';return {getVisibleRange};')(40);
+for (const height of [400, 1000, 2000]) {
+    const range = getVisibleRange(1200, height, 1000);
+    assert(range.start * 40 <= 1200 && range.end * 40 >= 1200 + height, 'Rendered rows must cover the entire viewport');
+}
+const {getSelectedTable, getConfiguredField} = new Function(extract('function getSelectedTable', 'function getCustomProperties') + ';return {getSelectedTable,getConfiguredField};')();
+const firstTable = {id: 'tblFirst'};
+const base = {tables: [firstTable], getTableByIdIfExists: id => id === firstTable.id ? firstTable : null};
+assert(getSelectedTable(base, undefined) === null && getSelectedTable(base, 'deleted') === null, 'Missing tables must never fall back to the first table');
+assert(getSelectedTable(base, {id: 'tblFirst'}) === firstTable, 'Table model settings must resolve correctly');
+const {enrichPortfolioRows} = new Function('COLUMNS', 'getConfiguredField', 'portfolioFieldKey', extract('function enrichPortfolioRows', 'function getVisibleRange') + ';return {enrichPortfolioRows};')([{key: 'x'}, {key: 'portfolioName'}], getConfiguredField, column => column.key + 'PortfolioField');
+const link = {id: 'fldLink'};
+const detail = {id: 'fldDetail'};
+const table = {getFieldIfExists: id => id === link.id ? link : id === detail.id ? detail : null};
+const portfolioRecord = {id: 'recPortfolio', getCellValue: () => 50};
+const cost = {id: 'cost1', source: 'DDC', record: {getCellValue: () => [{id: 'recPortfolio', name: 'Portfolio A'}]}, cells: {x: {field: null, value: null}, portfolioName: {field: null, value: null}}};
+const enriched = enrichPortfolioRows([cost, {...cost, id: 'cost2'}], {ddc: table, portfolio: table}, [portfolioRecord], {ddcPortfolioLink: link, xPortfolioField: detail});
+assert(enriched.length === 2 && enriched[0].cells.x.record === portfolioRecord && enriched[0].cells.x.value === 50, 'Portfolio join must resolve the correct record without multiplying costs');
+assert(aggregateColumns(enriched, new Set(['x']), {}).x === 50, 'Repeated portfolio details must count only once in totals');
+assert(textValue(enriched[0].cells.portfolioName.value) === 'Portfolio A', 'Portfolio links must provide default portfolio labels');
 console.log('Regression checks passed');

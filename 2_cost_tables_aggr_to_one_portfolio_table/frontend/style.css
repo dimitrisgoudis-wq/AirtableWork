@@ -31,7 +31,10 @@
 @tailwind utilities;
 
 .grid-app {
-    min-height: 100vh;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
     background: rgb(246, 248, 252);
     color: rgb(49, 53, 62);
     font-family: ui-sans-serif, system-ui, sans-serif;
@@ -237,7 +240,8 @@
 .top-filter-options label { display: flex; align-items: center; gap: 7px; cursor: pointer; }
 
 .grid-shell {
-    --grid-viewport-height: calc(100vh - 150px);
+    flex: 1;
+    min-height: 0;
     --grid-header-height: 40px;
     display: grid;
     background: white;
@@ -249,6 +253,7 @@
     min-width: 0;
     overflow: hidden;
 }
+.scroll-grid-pane { display: flex; flex-direction: column; }
 .frozen-grid-pane { border-right: 1px solid rgb(196, 199, 205); }
 .grid-header-scroll,
 .grid-footer-scroll {
@@ -283,8 +288,7 @@
 .frozen-body-pane {
     position: relative;
     /* The scroll pane's viewport includes its header; this pane starts below its header. */
-    height: calc(var(--grid-viewport-height) - var(--grid-header-height));
-    min-height: 300px;
+    min-height: 0;
     overflow: hidden;
     background: white;
 }
@@ -312,7 +316,10 @@
 .grid-header-cell { position: relative; font-size: 11px; font-weight: 600; white-space: nowrap; text-overflow: ellipsis; }
 .resize-handle { position: absolute; top: 0; right: -3px; width: 7px; height: 100%; cursor: col-resize; z-index: 4; }
 .resize-handle:hover { background: rgb(22, 110, 225); }
-.grid-viewport { height: var(--grid-viewport-height); min-height: 340px; overflow: auto; }
+.grid-viewport { flex: 1; min-height: 0; overflow: auto; }
+.grid-footer-scroll { flex: 0 0 40px; }
+.grid-toolbar { flex-wrap: wrap; flex-shrink: 0; }
+.filter-builder { max-height: 40vh; overflow: auto; flex-shrink: 0; }
 .grid-row:hover { background: rgb(241, 245, 255); }
 .grid-cell {
     font-size: 12px;
